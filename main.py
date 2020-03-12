@@ -238,7 +238,7 @@ df_clean = family_deliv.merge(qty_amount, how='left',on=['DocNumber','ProductDes
 del df2,family_deliv, holidays, holidays_date, qty_amount, weekDays
 
 # Save df to csv file
-df_clean.to_csv(r'C:\Users\Sofia\OneDrive - NOVAIMS\Nova IMS\Mestrado\2º semestre\Business Cases\BC3\BCDS_Proj2_MktBasket\data_cyprus.csv', index = False)
+#df_clean.to_csv(r'C:\Users\Sofia\OneDrive - NOVAIMS\Nova IMS\Mestrado\2º semestre\Business Cases\BC3\BCDS_Proj2_MktBasket\data_cyprus.csv', index = False)
 
 #----------------------
 # ONE HOT ENCODING
@@ -249,10 +249,17 @@ df_clean['Meal'] = df_clean['Meal'].astype('category')
 df_clean['Weekday'] = df_clean['Weekday'].astype('category')
 df_clean_final = pd.get_dummies(df_clean)
 
-product_cols = [i.split('_')[-1].strip() for i in df_clean_final.columns if 'ProductDesignation' in i]
-family_cols = [i.split('_')[-1].strip() for i in df_clean_final.columns if 'ProductFamily' in i]
+# para usarmos quando quisermos usar apenas algumas variáveis para as association rules
+product_cols = list(df1.ProductDesignation.unique())
+family_cols = list(df1.ProductFamily.unique())
+season_cols = list(df1.Season.unique())
+meal_cols = list(df1.Meal.unique())
+weekday_cols = list(df1.Weekday.unique())
 
+
+# clean columns names
 df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
+# por enquanto não vamos ter em conta as quantidades adquiridas de cada produto
 df_clean_final.drop(columns=['Qty'], inplace=True)
 
 
