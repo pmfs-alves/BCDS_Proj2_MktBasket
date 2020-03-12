@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import datetime
+from mlxtend.frequent_patterns import apriori
+from mlxtend.frequent_patterns import association_rules
 
 # Display output fully
 pd.set_option('display.max_rows', 500)
@@ -210,6 +212,9 @@ def get_season(data):
 # Create final attribute
 df1['Season'] = df1.Date.apply(get_season)
 
+# CREATE WEEKEND ATTRIBUTE
+df1['Weekend'] = df1.Weekday.apply(lambda x: 1 if x in ['Saturday','Sunday'] else 0)
+
 # CREATE ATTRIBUTES RELATED TO WEATHER
 
 # do web scrapping
@@ -223,67 +228,51 @@ df1['Season'] = df1.Date.apply(get_season)
 qty_amount = df1[['DocNumber','ProductDesignation','Qty','TotalAmount']].groupby(['DocNumber','ProductDesignation']).sum()
 
 # drop duplicates from the df (keep first) and create df with columns 'DocNumber','ProductDesignation','ProductFamily','IsDelivery'
-family_deliv = df1.drop_duplicates(subset=['DocNumber','ProductDesignation'],keep= 'first')[['DocNumber','ProductDesignation','ProductFamily','IsDelivery']]
+family_deliv = df1.drop_duplicates(subset=['DocNumber','ProductDesignation'],keep= 'first')[['DocNumber','ProductDesignation','ProductFamily','IsDelivery',
+                                    'Season','Meal','Holiday','Weekend','Weekday']]
 
 # merge the 2 df's created above
 df_clean = family_deliv.merge(qty_amount, how='left',on=['DocNumber','ProductDesignation'])
 
+# Delete useless variables
+del df2,family_deliv, holidays, holidays_date, qty_amount, weekDays
 
 #----------------------
 # ONE HOT ENCODING
 #----------------------
 
+df_clean['Season'] = df_clean['Season'].astype('category')
+df_clean['Meal'] = df_clean['Meal'].astype('category')
+df_clean['Weekday'] = df_clean['Weekday'].astype('category')
+df_clean_final = pd.get_dummies(df_clean)
 
+df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
+df_clean_final.drop(columns=['DocNumber','Qty'], inplace=True)
 
-
-#--------------------
+#---------------------------------------
 # ASSOCIATION RULES - simplest approach
-#--------------------
+#---------------------------------------
 
-df_clean_prod = df_clean[['DocNumber','ProductDesignation']]
-df_clean_family = df_clean[['DocNumber','ProductFamily']]
-
-pivot_family = pd.pivot_table(df_clean_family, index='DocNumber', columns='ProductFamily', aggfunc=lambda x: 1 if len(x)>0 else 0).fillna(0)
-pivot_family.head()
-
-pivot_prod = pd.pivot_table(df_clean_prod, index='DocNumber', columns='ProductDesignation', aggfunc=lambda x: 1 if len(x)>0 else 0).fillna(0)
-pivot_prod.head()
+#pivot_table = pd.pivot_table(df_clean_final, index=df_clean_final.index, columns=df_clean_final.columns, aggfunc=lambda x: 1 if len(x)>0 else 0).fillna(0)
+#pivot_table.head()
 
 # Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_fam = apriori(pivot_family, min_support=0.05, use_colnames=True)
-frequent_itemsets_prod = apriori(pivot_prod, min_support=0.05, use_colnames=True)
+frequent_itemsets_total = apriori(df_clean_final, min_support=0.05, use_colnames=True)
 
-##### EXPLORE FREQUENT_ITEMSETS FOR FamilyProduct #####
+##### EXPLORE FREQUENT_ITEMSETS #####
 # Add a column with the length
-frequent_itemsets_fam['length'] = frequent_itemsets_fam['itemsets'].apply(lambda x: len(x))
+frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
 
 # Length=2 and Support>=0.2
-frequent_itemsets_fam[(frequent_itemsets_fam['length'] > 1) & (frequent_itemsets_fam['support'] >= 0.2)].sort_values(by='support', ascending=False)
+frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
 
-
-##### EXPLORE FREQUENT_ITEMSETS FOR ProductDesignation #####
-# Add a column with the length
-frequent_itemsets_prod['length'] = frequent_itemsets_prod['itemsets'].apply(lambda x: len(x))
-
-# Length=2 and Support>=0.2
-frequent_itemsets_prod[(frequent_itemsets_prod['length'] > 1) & (frequent_itemsets_prod['support'] >= 0.2)].sort_values(by='support', ascending=False)
 
 # Generate the association rules FOR PRODUCT - by confidence
-rulesConfidence_prod = association_rules(frequent_itemsets_prod, metric="confidence", min_threshold=0.50)
-rulesConfidence_prod.sort_values(by='confidence', ascending=False, inplace=True)
-rulesConfidence_prod.head(10)
-
-# Generate the association rules FOR FAMILY - by confidence
-rulesConfidence_fam = association_rules(frequent_itemsets_fam, metric="confidence", min_threshold=0.50)
-rulesConfidence_fam.sort_values(by='confidence', ascending=False, inplace=True)
-rulesConfidence_fam.head(10)
-
-# Generate the association rules FOR PRODUCT - by lift
-rulesLift_prod = association_rules(frequent_itemsets_prod, metric="lift", min_threshold=1.5)
-rulesLift_prod.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_prod.head(10)
+rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
+rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
+rulesConfidence_total.head(10)
 
 # Generate the association rules FOR FAMILY - by lift
-rulesLift_fam = association_rules(frequent_itemsets_fam, metric="lift", min_threshold=1.5)
-rulesLift_fam.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_fam.head(10)
+rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
+rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
+rulesLift_total.head(10)
