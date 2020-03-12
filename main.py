@@ -237,6 +237,9 @@ df_clean = family_deliv.merge(qty_amount, how='left',on=['DocNumber','ProductDes
 # Delete useless variables
 del df2,family_deliv, holidays, holidays_date, qty_amount, weekDays
 
+# Save df to csv file
+df_clean.to_csv(r'C:\Users\Sofia\OneDrive - NOVAIMS\Nova IMS\Mestrado\2º semestre\Business Cases\BC3\BCDS_Proj2_MktBasket\data_cyprus.csv', index = False)
+
 #----------------------
 # ONE HOT ENCODING
 #----------------------
@@ -246,15 +249,26 @@ df_clean['Meal'] = df_clean['Meal'].astype('category')
 df_clean['Weekday'] = df_clean['Weekday'].astype('category')
 df_clean_final = pd.get_dummies(df_clean)
 
+product_cols = [i.split('_')[-1].strip() for i in df_clean_final.columns if 'ProductDesignation' in i]
+family_cols = [i.split('_')[-1].strip() for i in df_clean_final.columns if 'ProductFamily' in i]
+
 df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
-df_clean_final.drop(columns=['DocNumber','Qty'], inplace=True)
+df_clean_final.drop(columns=['Qty'], inplace=True)
 
-#---------------------------------------
-# ASSOCIATION RULES - simplest approach
-#---------------------------------------
 
-#pivot_table = pd.pivot_table(df_clean_final, index=df_clean_final.index, columns=df_clean_final.columns, aggfunc=lambda x: 1 if len(x)>0 else 0).fillna(0)
-#pivot_table.head()
+#--------------------------------------
+# GROUP BY INVOICE - get only 1 row per invoice
+#--------------------------------------
+# we only have binary variables, so max() will do the job
+print(df_clean_final.shape)
+df_clean_final = df_clean_final.groupby('DocNumber').max()
+
+print(df_clean_final.shape)
+df_clean_final.head()
+
+#----------------------------------------------------
+# ASSOCIATION RULES - simplest approach, all dummies
+#----------------------------------------------------
 
 # Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
 frequent_itemsets_total = apriori(df_clean_final, min_support=0.05, use_colnames=True)
@@ -266,13 +280,19 @@ frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(la
 # Length=2 and Support>=0.2
 frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
 
+frequent_itemsets_total.to_excel("frequent_itemsets_total.xlsx")  
 
-# Generate the association rules FOR PRODUCT - by confidence
+# Generate the association rules - by confidence
 rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
 rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
 rulesConfidence_total.head(10)
 
-# Generate the association rules FOR FAMILY - by lift
+rulesConfidence_total.to_excel("rulesConfidence_total.xlsx")  
+
+# Generate the association rules - by lift
 rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
 rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
 rulesLift_total.head(10)
+
+rulesLift_total.to_excel("rulesLift_total.xlsx")  
+
