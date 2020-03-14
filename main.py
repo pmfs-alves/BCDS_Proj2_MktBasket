@@ -267,42 +267,40 @@ df_clean.to_csv(r'./data/data_cyprus.csv', index = False)
 #----------------------
 # ONE HOT ENCODING
 #----------------------
+columns = list(df_clean.columns)
+
+# para usarmos quando quisermos usar apenas algumas variáveis para as association rules
+product_cols = [prod.strip() for prod in list(df_clean.ProductDesignation.unique())]
+family_cols = list(df_clean.ProductFamily.unique())
+season_cols = list(df_clean.Season.unique())
+meal_cols = list(df_clean.Meal.unique())
+weekday_cols = list(df_clean.Weekday.unique())
 
 df_clean['Season'] = df_clean['Season'].astype('category')
 df_clean['Meal'] = df_clean['Meal'].astype('category')
 df_clean['Weekday'] = df_clean['Weekday'].astype('category')
-df_clean_final = pd.get_dummies(df_clean)
 
-# para usarmos quando quisermos usar apenas algumas variáveis para as association rules
-product_cols = list(df1.ProductDesignation.unique())
-family_cols = list(df1.ProductFamily.unique())
-season_cols = list(df1.Season.unique())
-meal_cols = list(df1.Meal.unique())
-weekday_cols = list(df1.Weekday.unique())
-
+# get dummies
+df_clean_final = pd.get_dummies(df_clean, columns=['Season','Meal','Weekday','ProductFamily','ProductDesignation'])
 
 # clean columns names
 df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
-# por enquanto não vamos ter em conta as quantidades adquiridas de cada produto
-df_clean_final.drop(columns=['Qty'], inplace=True)
 
 
-#--------------------------------------
+#----------------------------------------------------
+# ASSOCIATION RULES - all dummies
+#----------------------------------------------------
+
+# create df with the wanted attributes to do the analysis
+df_clean_all_dummies = df_clean_final.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','CustomerSince','Latitude','Longitude','CustomerCity','Distance','Qty','TotalAmount','InvoiceDateHour_time','InvoiceHour'])
+
+
 # GROUP BY INVOICE - get only 1 row per invoice
-#--------------------------------------
 # we only have binary variables, so max() will do the job
-print(df_clean_final.shape)
-df_clean_final = df_clean_final.groupby('DocNumber').max()
-
-print(df_clean_final.shape)
-df_clean_final.head()
-
-#----------------------------------------------------
-# ASSOCIATION RULES - simplest approach, all dummies
-#----------------------------------------------------
+df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
 
 # Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_total = apriori(df_clean_final, min_support=0.05, use_colnames=True)
+frequent_itemsets_total = apriori(df_clean_all_dummies, min_support=0.05, use_colnames=True)
 
 ##### EXPLORE FREQUENT_ITEMSETS #####
 # Add a column with the length
@@ -311,19 +309,95 @@ frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(la
 # Length=2 and Support>=0.2
 frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
 
-frequent_itemsets_total.to_excel("frequent_itemsets_total.xlsx")  
+frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_total.xlsx")  
 
 # Generate the association rules - by confidence
 rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
 rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
 rulesConfidence_total.head(10)
 
-rulesConfidence_total.to_excel("rulesConfidence_total.xlsx")  
+rulesConfidence_total.to_excel("./Outputs/rulesConfidence_total.xlsx")  
 
 # Generate the association rules - by lift
 rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
 rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
 rulesLift_total.head(10)
 
-rulesLift_total.to_excel("rulesLift_total.xlsx")  
+rulesLift_total.to_excel("./Outputs/rulesLift_total.xlsx")  
+
+
+#----------------------------------------------------
+# ASSOCIATION RULES - only ProductDesignation attribute
+#----------------------------------------------------
+
+# create df with the wanted attributes to do the analysis
+df_clean_prod = df_clean_final[product_cols+['DocNumber']]
+
+# GROUP BY INVOICE - get only 1 row per invoice
+# we only have binary variables, so max() will do the job
+df_clean_prod = df_clean_prod.groupby('DocNumber').max()
+
+# Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
+frequent_itemsets_total = apriori(df_clean_prod, min_support=0.05, use_colnames=True)
+
+##### EXPLORE FREQUENT_ITEMSETS #####
+# Add a column with the length
+frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+
+# Length=2 and Support>=0.2
+frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
+
+frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_prod.xlsx")
+
+# Generate the association rules - by confidence
+rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
+rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
+rulesConfidence_total.head(10)
+
+rulesConfidence_total.to_excel("./Outputs/rulesConfidence_prod.xlsx")  
+
+# Generate the association rules - by lift
+rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
+rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
+rulesLift_total.head(10)
+
+rulesLift_total.to_excel("./Outputs/rulesLift_prod.xlsx")  
+
+
+#----------------------------------------------------
+# ASSOCIATION RULES - Product + Family attributes
+#----------------------------------------------------
+
+# create df with the wanted attributes to do the analysis
+df_clean_prod_fam = df_clean_final[product_cols+family_cols+['DocNumber']]
+
+# GROUP BY INVOICE - get only 1 row per invoice
+# we only have binary variables, so max() will do the job
+df_clean_prod_fam = df_clean_prod_fam.groupby('DocNumber').max()
+
+# Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
+frequent_itemsets_total = apriori(df_clean_prod, min_support=0.05, use_colnames=True)
+
+##### EXPLORE FREQUENT_ITEMSETS #####
+# Add a column with the length
+frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+
+# Length=2 and Support>=0.2
+frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
+
+frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_prod_fam.xlsx")
+
+# Generate the association rules - by confidence
+rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
+rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
+rulesConfidence_total.head(10)
+
+rulesConfidence_total.to_excel("./Outputs/rulesConfidence_prod_fam.xlsx")  
+
+# Generate the association rules - by lift
+rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
+rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
+rulesLift_total.head(10)
+
+rulesLift_total.to_excel("./Outputs/rulesLift_prod_fam.xlsx")  
 
