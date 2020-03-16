@@ -33,6 +33,14 @@ df1.rename(columns={'new_name':'CustomerCity'}, inplace=True)
 # correct TotalAmount data type
 df1.TotalAmount = df1.TotalAmount.apply(lambda x: float(str(x.replace(',', '.'))))
 
+# after taking a first look at the data we noticed there is more than 1 product family related to wine
+# as they individually, are not so important, we decided to join them in an unique family 'WINE'
+df1.ProductFamily.unique()
+# replace
+df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'WINE' if 'WINE' in x else x)
+# check if everything is ok
+df1.ProductFamily.unique()
+
 
 df1.describe(include="all")
 # Checking missing values
@@ -40,6 +48,17 @@ df1.describe(include="all")
 # CustomerCity - 52 861
 # CustomerSince - 54967
 df1.isnull().sum()
+
+# check that for delivery, the pax is always 1
+df1[df1.IsDelivery==1].Pax.nunique()
+
+# there are rows that are said to be from the restaurant, but the pax is 0,
+# this might mean they are take away clients!
+df1[(df1.IsDelivery==0)&(df1.Pax==0)]
+
+# but there are no clients from the restaurant or take away who have an "account"
+df1[(df1.IsDelivery==0)&(df1.CustomerID!=0)]
+
 
 # Customers that ate at the restaurant have missing values in CustomerCity and CustomerSince
 df1.IsDelivery.value_counts()
@@ -261,7 +280,7 @@ df_clean['Weekend'] = df_clean.Weekday.apply(lambda x: 1 if x in ['Saturday','Su
 del family_deliv, holidays, holidays_date, qty_amount, weekDays,columns, df1, df, norm_cities
 
 
-# Save df to csv file
+# Save df to csv file, to be explored in POWER BI
 df_clean.to_csv(r'./data/data_cyprus.csv', index = False)
 
 #----------------------
@@ -270,8 +289,8 @@ df_clean.to_csv(r'./data/data_cyprus.csv', index = False)
 columns = list(df_clean.columns)
 
 # para usarmos quando quisermos usar apenas algumas variáveis para as association rules
-product_cols = [prod.strip() for prod in list(df_clean.ProductDesignation.unique())]
-family_cols = list(df_clean.ProductFamily.unique())
+#product_cols = [prod.strip() for prod in list(df_clean.ProductDesignation.unique())]
+#family_cols = list(df_clean.ProductFamily.unique())
 
 df_clean['Season'] = df_clean['Season'].astype('category')
 df_clean['Meal'] = df_clean['Meal'].astype('category')
@@ -299,104 +318,33 @@ df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
 # Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
 frequent_itemsets_total = apriori(df_clean_all_dummies, min_support=0.05, use_colnames=True)
 
-##### EXPLORE FREQUENT_ITEMSETS #####
+# EXPLORE FREQUENT_ITEMSETS #
 # Add a column with the length
 frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
 
-# Length=2 and Support>=0.2
-frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
-
-frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_total.xlsx")  
+# put dataframe to excel
+frequent_itemsets_total.to_excel("./Outputs/Total/frequent_itemsets_total.xlsx")  
 
 # Generate the association rules - by confidence
 rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
 rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
+#lets take a look
 rulesConfidence_total.head(10)
+rulesConfidence_total.shape
 
-rulesConfidence_total.to_excel("./Outputs/rulesConfidence_total.xlsx")  
-
-# Generate the association rules - by lift
-rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
-rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_total.head(10)
-
-rulesLift_total.to_excel("./Outputs/rulesLift_total.xlsx")  
-
-
-#-------------------------------------------------------
-# ASSOCIATION RULES - only ProductDesignation attribute
-#-------------------------------------------------------
-
-# create df with the wanted attributes to do the analysis
-df_clean_prod = df_clean_final[product_cols+['DocNumber']]
-
-# GROUP BY INVOICE - get only 1 row per invoice
-# we only have binary variables, so max() will do the job
-df_clean_prod = df_clean_prod.groupby('DocNumber').max()
-
-# Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_total = apriori(df_clean_prod, min_support=0.05, use_colnames=True)
-
-##### EXPLORE FREQUENT_ITEMSETS #####
-# Add a column with the length
-frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
-
-# Length=2 and Support>=0.2
-frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
-
-frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_prod.xlsx")
-
-# Generate the association rules - by confidence
-rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
-rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
-rulesConfidence_total.head(10)
-
-rulesConfidence_total.to_excel("./Outputs/rulesConfidence_prod.xlsx")  
-
-# Generate the association rules - by lift
-rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
-rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_total.head(10)
-
-rulesLift_total.to_excel("./Outputs/rulesLift_prod.xlsx")  
+# get only rules with lift lower than 1 (check for substitute products)
+rulesLift_total_below1 = rulesConfidence_total[rulesConfidence_total.lift<1]
+rulesLift_total_below1.shape
+# get only rules with a lift higher than 1.5
+rulesLift_total = rulesConfidence_total[rulesConfidence_total.lift>1.5]
+rulesLift_total.shape
 
 
-#----------------------------------------------------
-# ASSOCIATION RULES - Product + Family attributes
-#----------------------------------------------------
+# put dataframe to excel
+rulesLift_total.to_excel("./Outputs/Total/rulesMetrics_total.xlsx")  
+rulesLift_total_below1.to_excel("./Outputs/Total/rulesMetrics_total_below1.xlsx")  
 
-# create df with the wanted attributes to do the analysis
-df_clean_prod_fam = df_clean_final[product_cols+family_cols+['DocNumber']]
-
-# GROUP BY INVOICE - get only 1 row per invoice
-# we only have binary variables, so max() will do the job
-df_clean_prod_fam = df_clean_prod_fam.groupby('DocNumber').max()
-
-# Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_total = apriori(df_clean_prod, min_support=0.05, use_colnames=True)
-
-##### EXPLORE FREQUENT_ITEMSETS #####
-# Add a column with the length
-frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
-
-# Length=2 and Support>=0.2
-frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
-
-frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_prod_fam.xlsx")
-
-# Generate the association rules - by confidence
-rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
-rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
-rulesConfidence_total.head(10)
-
-rulesConfidence_total.to_excel("./Outputs/rulesConfidence_prod_fam.xlsx")  
-
-# Generate the association rules - by lift
-rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
-rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_total.head(10)
-
-rulesLift_total.to_excel("./Outputs/rulesLift_prod_fam.xlsx")  
+del df_clean_all_dummies, frequent_itemsets_total, rulesConfidence_total, rulesLift_total, rulesLift_total_below1
 
 
 #------------------------------------
@@ -411,32 +359,34 @@ Delivery_df.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','Customer
 Delivery_df = Delivery_df.groupby('DocNumber').max()
 
 # Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_total = apriori(Delivery_df, min_support=0.05, use_colnames=True)
+frequent_itemsets_delivery = apriori(Delivery_df, min_support=0.05, use_colnames=True)
 
-##### EXPLORE FREQUENT_ITEMSETS #####
+# EXPLORE FREQUENT_ITEMSETS #
 # Add a column with the length
-frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+frequent_itemsets_delivery['length'] = frequent_itemsets_delivery['itemsets'].apply(lambda x: len(x))
 
-# Length=2 and Support>=0.2
-frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
-
-frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_DELIVERY.xlsx")  
+# put dataframe to excel
+frequent_itemsets_delivery.to_excel("./Outputs/Delivery/frequent_itemsets_DELIVERY.xlsx")  
 
 # Generate the association rules - by confidence
-rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
-rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
-rulesConfidence_total.head(10)
+rulesConfidence_delivery = association_rules(frequent_itemsets_delivery, metric="confidence", min_threshold=0.50)
+rulesConfidence_delivery.sort_values(by='confidence', ascending=False, inplace=True)
+#lets take a look
+rulesConfidence_delivery.head(10)
+rulesConfidence_delivery.shape
 
-rulesConfidence_total.to_excel("./Outputs/rulesConfidence_DELIVERY.xlsx")  
+# get only rules with lift lower than 1 (check for substitute products)
+rulesLift_delivery_below1 = rulesConfidence_delivery[rulesConfidence_delivery.lift<1]
+rulesLift_delivery_below1.shape
+# get only rules with a lift higher than 1.5
+rulesLift_delivery = rulesConfidence_delivery[rulesConfidence_delivery.lift>1.5]
+rulesLift_delivery.shape
 
-# Generate the association rules - by lift
-rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
-rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_total.head(10)
+# put dataframe to excel
+rulesLift_delivery.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY.xlsx")  
+rulesLift_delivery_below1.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_below1.xlsx")  
 
-rulesLift_total.to_excel("./Outputs/rulesLift_DELIVERY.xlsx")  
-
-
+del Delivery_df, frequent_itemsets_delivery, rulesConfidence_delivery, rulesLift_delivery, rulesLift_delivery_below1
 #------------------------------------
 # ASSOCIATION RULES - ONLY DINE INN 
 #------------------------------------
@@ -449,27 +399,32 @@ DineInn_df.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','CustomerS
 DineInn_df = DineInn_df.groupby('DocNumber').max()
 
 # Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_total = apriori(DineInn_df, min_support=0.05, use_colnames=True)
+frequent_itemsets_dineinn = apriori(DineInn_df, min_support=0.05, use_colnames=True)
 
-##### EXPLORE FREQUENT_ITEMSETS #####
+# EXPLORE FREQUENT_ITEMSETS #
 # Add a column with the length
-frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+frequent_itemsets_dineinn['length'] = frequent_itemsets_dineinn['itemsets'].apply(lambda x: len(x))
 
-# Length=2 and Support>=0.2
-frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
-
-frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_DINE-INN.xlsx")  
+# put dataframe to excel
+frequent_itemsets_dineinn.to_excel("./Outputs/DineInn/frequent_itemsets_DINE-INN.xlsx")  
 
 # Generate the association rules - by confidence
-rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
-rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
-rulesConfidence_total.head(10)
+rulesConfidence_dineinn = association_rules(frequent_itemsets_dineinn, metric="confidence", min_threshold=0.50)
+rulesConfidence_dineinn.sort_values(by='confidence', ascending=False, inplace=True)
+#lets take a look
+rulesConfidence_dineinn.head(10)
+rulesConfidence_dineinn.shape
 
-rulesConfidence_total.to_excel("./Outputs/rulesConfidence_DINE-INN.xlsx")  
+# get only rules with lift lower than 1 (check for substitute products)
+rulesLift_dineinn_below1 = rulesConfidence_dineinn[rulesConfidence_dineinn.lift<1]
+rulesLift_dineinn_below1.shape
 
-# Generate the association rules - by lift
-rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
-rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
-rulesLift_total.head(10)
+# get only rules with a lift higher than 1.5
+rulesLift_dineinn = rulesConfidence_dineinn[rulesConfidence_dineinn.lift>1.5]
+rulesLift_dineinn.shape 
 
-rulesLift_total.to_excel("./Outputs/rulesLift_DINE-INN.xlsx")
+# put dataframe to excel
+rulesLift_dineinn.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN.xlsx")  
+rulesLift_dineinn_below1.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_below1.xlsx")  
+
+del DineInn_df, frequent_itemsets_dineinn, rulesConfidence_dineinn, rulesLift_dineinn, rulesLift_dineinn_below1 
