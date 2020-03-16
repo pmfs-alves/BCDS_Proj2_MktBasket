@@ -202,18 +202,18 @@ df_clean = family_deliv.merge(qty_amount, how='left',on=['DocNumber','ProductDes
 # CREATE WEEKDAY ATTRIBUTE
 
 # Create attribute InvoiceDateHour_time -> turn InvoiceDateHour to type Datetime
-df_clean['InvoiceDateHour_time'] =  pd.to_datetime(df_clean['InvoiceDateHour'], format='%Y-%m-%d %H:%M:%S.%f')
+df_clean['InvoiceDateHourTime'] =  pd.to_datetime(df_clean['InvoiceDateHour'], format='%Y-%m-%d %H:%M:%S.%f')
 # Drop original column
 df_clean.drop(columns=['InvoiceDateHour'],inplace=True)
 # Create list with weekdays
 weekDays = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 # Create new column with weekday name
-df_clean['Weekday'] = df_clean.InvoiceDateHour_time.apply(lambda x: weekDays[x.weekday()])
+df_clean['Weekday'] = df_clean.InvoiceDateHourTime.apply(lambda x: weekDays[x.weekday()])
 
 # CREATE MEAL (LUNCH/DINNER) ATTRIBUTE
 
 # Create attribute which only shows the hour of the invoice
-df_clean['InvoiceHour'] = df_clean.InvoiceDateHour_time.apply(lambda x: x.hour)
+df_clean['InvoiceHour'] = df_clean.InvoiceDateHourTime.apply(lambda x: x.hour)
 # See distribution of hours, given if it is delivery or dine inn
 df_clean.groupby(by='IsDelivery')['InvoiceHour'].value_counts()
 # Create attribute
@@ -222,7 +222,7 @@ df_clean['Meal'] = df_clean.InvoiceHour.apply(lambda x: 'Lunch' if x<=17 and x>1
 # CREATE HOLIDAY ATTRIBUTE
 
 # Create attribute without the hour, min, sec
-df_clean['Date'] = df_clean.InvoiceDateHour_time.apply(lambda x: x.date())
+df_clean['Date'] = df_clean.InvoiceDateHourTime.apply(lambda x: x.date())
 # Create list with dates of holidays for 2018 in cyprus
 holidays = ['01 Jan 2018','06 Jan 2018','19 Feb 2018','25 Mar 2018','01 Apr 2018','06 Apr 2018','07 Apr 2018','08 Apr 2018','09 Apr 2018','01 May 2018','28 May 2018','15 Aug 2018','01 Oct 2018','28 Oct 2018','24 Dec 2018','25 Dec 2018','26 Dec 2018','31 Dec 2018']
 holidays_date = pd.to_datetime(holidays,format='%d %b %Y')
@@ -272,9 +272,6 @@ columns = list(df_clean.columns)
 # para usarmos quando quisermos usar apenas algumas variáveis para as association rules
 product_cols = [prod.strip() for prod in list(df_clean.ProductDesignation.unique())]
 family_cols = list(df_clean.ProductFamily.unique())
-season_cols = list(df_clean.Season.unique())
-meal_cols = list(df_clean.Meal.unique())
-weekday_cols = list(df_clean.Weekday.unique())
 
 df_clean['Season'] = df_clean['Season'].astype('category')
 df_clean['Meal'] = df_clean['Meal'].astype('category')
@@ -287,12 +284,12 @@ df_clean_final = pd.get_dummies(df_clean, columns=['Season','Meal','Weekday','Pr
 df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
 
 
-#----------------------------------------------------
+#------------------------------------
 # ASSOCIATION RULES - all dummies
-#----------------------------------------------------
+#------------------------------------
 
 # create df with the wanted attributes to do the analysis
-df_clean_all_dummies = df_clean_final.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','CustomerSince','Latitude','Longitude','CustomerCity','Distance','Qty','TotalAmount','InvoiceDateHour_time','InvoiceHour'])
+df_clean_all_dummies = df_clean_final.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','CustomerSince','Latitude','Longitude','CustomerCity','Distance','Qty','TotalAmount','InvoiceDateHourTime','InvoiceHour'])
 
 
 # GROUP BY INVOICE - get only 1 row per invoice
@@ -326,9 +323,9 @@ rulesLift_total.head(10)
 rulesLift_total.to_excel("./Outputs/rulesLift_total.xlsx")  
 
 
-#----------------------------------------------------
+#-------------------------------------------------------
 # ASSOCIATION RULES - only ProductDesignation attribute
-#----------------------------------------------------
+#-------------------------------------------------------
 
 # create df with the wanted attributes to do the analysis
 df_clean_prod = df_clean_final[product_cols+['DocNumber']]
@@ -401,3 +398,78 @@ rulesLift_total.head(10)
 
 rulesLift_total.to_excel("./Outputs/rulesLift_prod_fam.xlsx")  
 
+
+#------------------------------------
+# ASSOCIATION RULES - ONLY DELIVERY 
+#------------------------------------
+
+Delivery_df = df_clean_final[df_clean_final.IsDelivery==1]
+Delivery_df.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','CustomerSince','Latitude','Longitude','CustomerCity','Distance','Qty','TotalAmount','InvoiceDateHourTime','InvoiceHour'], inplace=True)
+
+# GROUP BY INVOICE - get only 1 row per invoice
+# we only have binary variables, so max() will do the job
+Delivery_df = Delivery_df.groupby('DocNumber').max()
+
+# Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
+frequent_itemsets_total = apriori(Delivery_df, min_support=0.05, use_colnames=True)
+
+##### EXPLORE FREQUENT_ITEMSETS #####
+# Add a column with the length
+frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+
+# Length=2 and Support>=0.2
+frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
+
+frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_DELIVERY.xlsx")  
+
+# Generate the association rules - by confidence
+rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
+rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
+rulesConfidence_total.head(10)
+
+rulesConfidence_total.to_excel("./Outputs/rulesConfidence_DELIVERY.xlsx")  
+
+# Generate the association rules - by lift
+rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
+rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
+rulesLift_total.head(10)
+
+rulesLift_total.to_excel("./Outputs/rulesLift_DELIVERY.xlsx")  
+
+
+#------------------------------------
+# ASSOCIATION RULES - ONLY DINE INN 
+#------------------------------------
+
+DineInn_df = df_clean_final[df_clean_final.IsDelivery==0]
+DineInn_df.drop(columns=['EmployeeID','IsDelivery','Pax','CustomerID','CustomerSince','Latitude','Longitude','CustomerCity','Distance','Qty','TotalAmount','InvoiceDateHourTime','InvoiceHour'], inplace=True)
+
+# GROUP BY INVOICE - get only 1 row per invoice
+# we only have binary variables, so max() will do the job
+DineInn_df = DineInn_df.groupby('DocNumber').max()
+
+# Rules supported in at least 5% of the transactions (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
+frequent_itemsets_total = apriori(DineInn_df, min_support=0.05, use_colnames=True)
+
+##### EXPLORE FREQUENT_ITEMSETS #####
+# Add a column with the length
+frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+
+# Length=2 and Support>=0.2
+frequent_itemsets_total[(frequent_itemsets_total['length'] > 1) & (frequent_itemsets_total['support'] >= 0.2)].sort_values(by='support', ascending=False)
+
+frequent_itemsets_total.to_excel("./Outputs/frequent_itemsets_DINE-INN.xlsx")  
+
+# Generate the association rules - by confidence
+rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
+rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
+rulesConfidence_total.head(10)
+
+rulesConfidence_total.to_excel("./Outputs/rulesConfidence_DINE-INN.xlsx")  
+
+# Generate the association rules - by lift
+rulesLift_total = association_rules(frequent_itemsets_total, metric="lift", min_threshold=1.5)
+rulesLift_total.sort_values(by='lift', ascending=False, inplace=True)
+rulesLift_total.head(10)
+
+rulesLift_total.to_excel("./Outputs/rulesLift_DINE-INN.xlsx")
