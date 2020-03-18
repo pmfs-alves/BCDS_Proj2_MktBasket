@@ -298,14 +298,14 @@ df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_f
 # ASSOCIATION RULES - All Dummies --------------------------------------------------------------------------------------
 # TODO: remove duplicated rules (e.g. A1={a,b,c,d} and A2={a,b,d} ans C1=C2). Can be done by finding common subset.
 #  Explore frozenset datatype https://docs.python.org/3.6/library/stdtypes.html#frozenset
+# TODO: plot the network with a sample of the rules but maintaining every single consequent
 # TODO: see variables and think on what antecedents/ consequents would be interesting to explore
-# TODO: implement arrows in network:
-#  https://stackoverflow.com/questions/46150015/network-graph-not-showing-arrows-along-edge-in-python
+
 
 def network_rules(rulesdf, nrules=100, save_path=None):
-    """Plot a basic network graph of the top 100 confidence rules
+    """Plot a basic network graph of the confidence rules. Arrows point to consequent.
     - rulesdf: association rules dataframe
-    - nrules: how many rules to plot
+    - nrules: how many rules to plot (int or "all" - not advisable for more than 500 rules)
     - save_path: path to save figure
     """
     # Create a copy of the rules and transform the frozensets to strings
@@ -317,20 +317,18 @@ def network_rules(rulesdf, nrules=100, save_path=None):
     rulesToPlot['sortedRow'] = rulesToPlot['sortedRow'].astype(str)
     rulesToPlot.drop_duplicates(subset=['sortedRow'], inplace=True)
     # Plot
-    rulesToPlot = rulesToPlot[:nrules]
+    if type(nrules) == int:
+        rulesToPlot = rulesToPlot[:nrules]
     fig = plt.figure(figsize=(20, 20))
     rulesToPlot["LHS"] = rulesToPlot["LHS"].str.lower()
     rulesToPlot["RHS"] = rulesToPlot["RHS"].str.lower()
-    G = nx.from_pandas_edgelist(rulesToPlot, 'LHS', 'RHS')
+    G = nx.from_pandas_edgelist(rulesToPlot, 'LHS', 'RHS', create_using=nx.MultiDiGraph())
     pos = nx.spring_layout(G)
     nx.draw_networkx_nodes(G, pos, with_labels=False, node_size=30, node_color='r', alpha=0.9, seed=1234)
-    nx.draw_networkx_edges(G, pos, arrows=True, arrow_style="fancy", arrow_size=100, seed=1234)
-    # nx.draw_network(G, pos, with_labels=False, node_size=30, arrow_style="fancy", arrow_size=100,
-    #         node_color="red", arrows=True, alpha=0.8, seed=1234)
-    label_pos = {k: v + [0.002, 0.005] for k, v in pos.items()}
+    nx.draw_networkx_edges(G, pos, arrows=True, arrow_style="fancy", edge_color="darkgrey", arrow_size=80,
+                           alpha=0.8, seed=1234)
+    label_pos = {k: v + [0.002, 0.004] for k, v in pos.items()}
     nx.draw_networkx_labels(G, label_pos, font_size=8)
-    arrows_pos = {i: i + 1 for i in G.nodes()}
-    nx.draw_networkx_labels(G, pos, arrows_pos, font_size=15, arrows=True)
     plt.axis('equal')
     if save_path:
         fig.savefig(save_path)
@@ -366,8 +364,8 @@ rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True
 rulesConfidence_total.head(10)
 rulesConfidence_total["antecedent support"].plot.box()
 rulesConfidence_total["confidence"].plot.box()
-rulesConfidence_total.shape
-network_rules(rulesConfidence_total)
+rulesConfidence_total.shape  # 15342 rows
+network_rules(rulesConfidence_total, 500)
 # TODO: A big part of these rules are useless as they are influenced by non mutually exclusive variables (e.g. the
 #  confidence of a rule with antecedent {Mineral water, ...} and consequent {Drinks, ...} is always 1. Should we maybe
 #  do a separate analysis for different levels of granularity?
@@ -377,17 +375,18 @@ network_rules(rulesConfidence_total)
 #  confidence > 0.5. We might have C that happens rarely given A and that it's more probable to happen C by itself
 rulesLift_total_subs = association_rules(frequent_itemsets_total, metric="lift", min_threshold=0.0)
 rulesLift_total_subs = rulesLift_total_subs[rulesLift_total_subs.lift < 0.9]
-rulesLift_total_subs.shape
-network_rules(rulesLift_total_subs)
+rulesLift_total_subs.shape  # 94 rows
+network_rules(rulesLift_total_subs, "all")
 
 # get only rules with a lift higher than 3
 # TODO: Called association_rules again because previously with the filter we would be filtering for lift > 3 and
 #  confidence > 0.5. We might have C that happens rarely given A and that it's more probable to happen C given A
 rulesLift_total_comp = association_rules(frequent_itemsets_total, metric="lift", min_threshold=3)
-rulesLift_total_comp.shape
-network_rules(rulesLift_total_comp)
+rulesLift_total_comp.shape  # 3224 rows
+network_rules(rulesLift_total_comp, 500)
 
 # put dataframe to excel
+rulesConfidence_total.to_excel("./Outputs/Total/rulesMetrics_total_confidence.xlsx")
 rulesLift_total_comp.to_excel("./Outputs/Total/rulesMetrics_total_comp.xlsx")
 rulesLift_total_subs.to_excel("./Outputs/Total/rulesMetrics_total_subs.xlsx")
 
@@ -420,18 +419,22 @@ rulesConfidence_delivery = association_rules(frequent_itemsets_delivery, metric=
 rulesConfidence_delivery.sort_values(by='confidence', ascending=False, inplace=True)
 # lets take a look
 rulesConfidence_delivery.head(10)
-rulesConfidence_delivery.shape
+rulesConfidence_delivery.shape  # 28097 rows
+network_rules(rulesConfidence_delivery, 500)
 
 # get only rules with lift lower than 0.9 (check for substitute products)
 rulesLift_delivery_subs = association_rules(frequent_itemsets_delivery, metric="lift", min_threshold=0.0)
 rulesLift_delivery_subs = rulesLift_delivery_subs[rulesLift_delivery_subs.lift < 0.9]
-rulesLift_delivery_subs.shape
+rulesLift_delivery_subs.shape  # 28 rows
+network_rules(rulesLift_delivery_subs, "all")
 
 # get only rules with a lift higher than 3
 rulesLift_delivery_comp = association_rules(frequent_itemsets_delivery, metric="lift", min_threshold=3)
-rulesLift_delivery_comp.shape
+rulesLift_delivery_comp.shape  # 5466 rows
+network_rules(rulesLift_delivery_comp, 500)
 
 # put dataframe to excel
+rulesConfidence_delivery.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_confidence.xlsx")
 rulesLift_delivery_comp.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_comp.xlsx")
 rulesLift_delivery_subs.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_subs.xlsx")
 
@@ -463,18 +466,22 @@ rulesConfidence_dineinn = association_rules(frequent_itemsets_dineinn, metric="c
 rulesConfidence_dineinn.sort_values(by='confidence', ascending=False, inplace=True)
 # lets take a look
 rulesConfidence_dineinn.head(10)
-rulesConfidence_dineinn.shape
+rulesConfidence_dineinn.shape  # 107847 rows
+network_rules(rulesConfidence_dineinn, 500)
 
 # get only rules with lift lower than 0.9 (check for substitute products)
 rulesLift_dineinn_subs = association_rules(frequent_itemsets_dineinn, metric="lift", min_threshold=0.0)
 rulesLift_dineinn_subs = rulesLift_dineinn_subs[rulesLift_dineinn_subs.lift < 0.9]
-rulesLift_dineinn_subs.shape
+rulesLift_dineinn_subs.shape  # 484 rows
+network_rules(rulesLift_dineinn_subs, "all")
 
 # get only rules with a lift higher than 3
 rulesLift_dineinn_comp = association_rules(frequent_itemsets_dineinn, metric="lift", min_threshold=3)
-rulesLift_dineinn_comp.shape
+rulesLift_dineinn_comp.shape  # 20046 rows
+network_rules(rulesLift_dineinn_comp, 500)
 
 # put dataframe to excel
+rulesConfidence_dineinn.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_confidence.xlsx")
 rulesLift_dineinn_comp.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_comp.xlsx")
 rulesLift_dineinn_subs.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_subs.xlsx")
 
