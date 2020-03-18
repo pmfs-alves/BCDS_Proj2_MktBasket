@@ -41,6 +41,15 @@ df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'WINE' if 'WINE' in x else
 # check if everything is ok
 df1.ProductFamily.unique()
 
+# If we want one single family for all Sushi
+# SEE IF WE WANT THIS
+df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'SUSHI' if 'SUSHI' in x else x)
+
+# If we want one single family for all indian food (maybe who eats indian, eats something else?)
+# SEE IF WE WANT THIS
+df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'INDIAN' if 'IND' in x else x)
+
+
 df1.describe(include="all")
 # Checking missing values
 # só customer city e customer since têm NULLS
@@ -296,9 +305,11 @@ df_clean_final = pd.get_dummies(df_clean, columns=['Season', 'Meal', 'Weekday', 
 df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
 
 # ASSOCIATION RULES - All Dummies --------------------------------------------------------------------------------------
-# TODO: remove duplicated rules (e.g. A1={a,b,c,d} and A2={a,b,d} ans C1=C2). Can be done by finding common subset.
+# TODO: remove duplicated rules (e.g. A1={a,b,c,d} and A2={a,b,d} and C1=C2). Can be done by finding common subset.
 #  Explore frozenset datatype https://docs.python.org/3.6/library/stdtypes.html#frozenset
-# TODO: plot the network with a sample of the rules but maintaining every single consequent
+# SE A1 NÃO FOR UMA BOA ASSOCIAÇÃO (LOW CONFIDENCE POR EXEMPLO), QUEREMOS REMOVÊ-LA E DEIXAR O A2 (SE O A2 FOR BOM)
+# SE A1 FOR UMA BOA ASSOCIAÇÃO QUEREMOS REMOVER TUDO O QUE ESTÁ PARA BAIXO, CERT0? Temos que pensar nisto
+#  TODO: plot the network with a sample of the rules but maintaining every single consequent
 # TODO: see variables and think on what antecedents/ consequents would be interesting to explore
 
 
