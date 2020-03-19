@@ -383,7 +383,7 @@ network_rules(rulesLift_total_subs, "all")
 #  confidence > 0.5. We might have C that happens rarely given A and that it's more probable to happen C given A
 rulesLift_total_comp = association_rules(frequent_itemsets_total, metric="lift", min_threshold=3)
 rulesLift_total_comp.shape  # 3224 rows
-network_rules(rulesLift_total_comp, 500)
+network_rules(rulesLift_total_comp, 200)
 
 # put dataframe to excel
 rulesConfidence_total.to_excel("./Outputs/Total/rulesMetrics_total_confidence.xlsx")
