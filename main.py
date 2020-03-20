@@ -292,25 +292,27 @@ df_clean.to_csv(r'./data/data_cyprus.csv', index=False)
 columns = df_clean.columns.to_list()
 
 # Para usarmos quando quisermos usar apenas algumas variáveis para as association rules
-# product_cols = [prod.strip() for prod in list(df_clean.ProductDesignation.unique())]
+product_cols = ['ProductDesignation_' + prod for prod in list(df_clean.ProductDesignation.unique())]
 # family_cols = list(df_clean.ProductFamily.unique())
 
 df_clean['Season'] = df_clean['Season'].astype('category')
 df_clean['Meal'] = df_clean['Meal'].astype('category')
 df_clean['Weekday'] = df_clean['Weekday'].astype('category')
 
-# Get dummies
-df_clean_final = pd.get_dummies(df_clean, columns=['Season', 'Meal', 'Weekday', 'ProductFamily', 'ProductDesignation'])
-# Clean columns names
-df_clean_final.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final.columns))
+# Get dummies and dropping useless/ redudant columns
+df_clean_final = pd.get_dummies(df_clean, columns=['Season', 'Meal', 'Weekday', 'ProductFamily', 'ProductDesignation']).\
+    drop(["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT"], axis=1)
 
-# ASSOCIATION RULES - All Dummies --------------------------------------------------------------------------------------
+for i in ["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT"]:
+    product_cols.remove(i)
+
 # TODO: remove duplicated rules (e.g. A1={a,b,c,d} and A2={a,b,d} and C1=C2). Can be done by finding common subset.
 #  Explore frozenset datatype https://docs.python.org/3.6/library/stdtypes.html#frozenset
 # SE A1 NÃO FOR UMA BOA ASSOCIAÇÃO (LOW CONFIDENCE POR EXEMPLO), QUEREMOS REMOVÊ-LA E DEIXAR O A2 (SE O A2 FOR BOM)
 # SE A1 FOR UMA BOA ASSOCIAÇÃO QUEREMOS REMOVER TUDO O QUE ESTÁ PARA BAIXO, CERT0? Temos que pensar nisto
 #  TODO: plot the network with a sample of the rules but maintaining every single consequent
 # TODO: see variables and think on what antecedents/ consequents would be interesting to explore
+# TODO: color each node according to product family
 
 
 def network_rules(rulesdf, nrules=100, save_path=None):
@@ -347,153 +349,269 @@ def network_rules(rulesdf, nrules=100, save_path=None):
         fig.show()
 
 
-# Create df with the desired attributes to do the analysis
+def associations(invoice_df, min_support=0.05, min_confidence=0.5, low_lift=0.9, high_lift=3, export_path=None):
+    """
+    Applies the apriori algorithm to find the most frequent itemsets and afterwards looks for the most relevant,
+    low lift and high lift rules.
+    - invoice_df: dataframe object with rows representing an invoice and binary columns.
+    - min_support: minimum probability of an itemset to be considered frequent. Default 0.05.
+    - min_confidence: minimum confidence of an association rule to be considered relevant. Default 0.5.
+    - low_lift: maximum lift of an association rule to be considered as potential substitutes. Default 0.9.
+    Should be <1.
+    - high_lift: minimum lift of an association rule to be considered as potential complementary. Default 3.
+    Should be >1.
+    - export_path: path to export (if passed) most frequent itemsets, most relevant rules, low lift rules and
+    high lift rules.
+    """
+    frequent_itemsets = apriori(invoice_df, min_support=min_support, use_colnames=True)
+    frequent_itemsets['length'] = frequent_itemsets['itemsets'].apply(lambda x: len(x))
+
+    relevant_rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence)
+    relevant_rules.sort_values(by='confidence', ascending=False, inplace=True)
+
+    low_lift_rules = association_rules(frequent_itemsets, metric="lift", min_threshold=0)
+    low_lift_rules = low_lift_rules[low_lift_rules.lift < low_lift]
+    low_lift_rules.sort_values(by='lift', ascending=True, inplace=True)
+
+    high_lift_rules = association_rules(frequent_itemsets, metric="lift", min_threshold=high_lift)
+    high_lift_rules.sort_values(by='lift', ascending=False, inplace=True)
+
+    if export_path:
+        frequent_itemsets.to_excel(export_path + "frequent_itemsets.xlsx")
+        relevant_rules.to_excel(export_path + "relevant_rules.xlsx")
+        low_lift_rules.to_excel(export_path + "low_lift_rules.xlsx")
+        high_lift_rules.to_excel(export_path + "high_lift_rules.xlsx")
+
+    return frequent_itemsets, relevant_rules, low_lift_rules, high_lift_rules
+
+
+# ASSOCIATION RULES - Product Dummies ----------------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product columns
+df_clean_final_products = df_clean_final[["DocNumber"] + product_cols]
+# Clean columns names
+df_clean_final_products.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final_products.columns))
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_product_dummies = df_clean_final_products.groupby('DocNumber').max()
+df_clean_product_dummies.describe(include="all").transpose()
+
+# ASSOCIATIONS
+frequent_itemsets_products, relevant_rules_products, low_lift_rules_products, \
+    high_lift_rules_products = associations(df_clean_product_dummies,
+                                            low_lift=1,
+                                            high_lift=2,
+                                            export_path="./Outputs/Products_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_products.shape[0]  # number of rows
+frequent_itemsets_products.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_products.shape[0]  # number of rows
+relevant_rules_products["support"].plot.box()
+relevant_rules_products["confidence"].plot.box()
+network_rules(relevant_rules_products, "all")
+
+# LOW-LIFT RULES
+low_lift_rules_products.shape[0]  # number of rows -> No rules with lift < 1
+# network_rules(low_lift_rules_products, "all")
+
+# HIGH-LIFT RULES
+high_lift_rules_products.shape[0]  # number of rows
+network_rules(high_lift_rules_products, "all")
+
+del df_clean_product_dummies, frequent_itemsets_products, relevant_rules_products, low_lift_rules_products, \
+    high_lift_rules_products
+
+# ASSOCIATION RULES - Product Dummies Only Delivery --------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product columns
+df_clean_final_products = df_clean_final.loc[df_clean_final.IsDelivery == 1, ["DocNumber"] + product_cols]
+# Clean columns names
+df_clean_final_products.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final_products.columns))
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_product_dummies = df_clean_final_products.groupby('DocNumber').max()
+df_clean_product_dummies.describe(include="all").transpose()
+
+# ASSOCIATIONS
+frequent_itemsets_products_delivery, relevant_rules_products_delivery, low_lift_rules_products_delivery, \
+    high_lift_rules_products_delivery = associations(df_clean_product_dummies,
+                                                     min_confidence=0.5,
+                                                     low_lift=1,
+                                                     high_lift=2,
+                                                     export_path="./Outputs/Products_Delivery/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_products_delivery.shape[0]  # number of rows
+frequent_itemsets_products_delivery.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_products_delivery.shape[0]  # number of rows
+relevant_rules_products_delivery["support"].plot.box()
+relevant_rules_products_delivery["confidence"].plot.box()
+network_rules(relevant_rules_products_delivery, "all")
+
+# LOW-LIFT RULES
+low_lift_rules_products_delivery.shape[0]  # number of rows -> no rules with lift < 1
+# network_rules(low_lift_rules_products_delivery, "all")
+
+# HIGH-LIFT RULES
+high_lift_rules_products_delivery.shape[0]  # number of rows
+network_rules(high_lift_rules_products_delivery, "all")
+
+del df_clean_product_dummies, frequent_itemsets_products_delivery, relevant_rules_products_delivery,\
+    low_lift_rules_products_delivery, high_lift_rules_products_delivery
+
+# ASSOCIATION RULES - Product Dummies DineInn --------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product columns
+df_clean_final_products = df_clean_final.loc[df_clean_final.IsDelivery == 0, ["DocNumber"] + product_cols]
+# Clean columns names
+df_clean_final_products.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final_products.columns))
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_product_dummies = df_clean_final_products.groupby('DocNumber').max()
+df_clean_product_dummies.describe(include="all").transpose()
+
+# ASSOCIATIONS
+frequent_itemsets_products_dineinn, relevant_rules_products_dineinn, low_lift_rules_products_dineinn, \
+    high_lift_rules_products_dineinn = associations(df_clean_product_dummies,
+                                                    low_lift=1,
+                                                    high_lift=2,
+                                                    export_path="./Outputs/Products_DineInn/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_products_dineinn.shape[0]  # number of rows
+frequent_itemsets_products_dineinn.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_products_dineinn.shape[0]  # number of rows
+relevant_rules_products_dineinn["support"].plot.box()
+relevant_rules_products_dineinn["confidence"].plot.box()
+network_rules(relevant_rules_products_dineinn, "all")
+
+# LOW-LIFT RULES
+low_lift_rules_products_dineinn.shape[0]  # number of rows -> no rules with lift < 1
+# network_rules(low_lift_rules_products_dineinn, "all")
+
+# HIGH-LIFT RULES
+high_lift_rules_products_dineinn.shape[0]  # number of rows
+network_rules(high_lift_rules_products_dineinn, "all")
+
+del df_clean_product_dummies, frequent_itemsets_products_dineinn, relevant_rules_products_dineinn, \
+    low_lift_rules_products_dineinn, high_lift_rules_products_dineinn
+
+# ASSOCIATION RULES - All Dummies --------------------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product columns
 df_clean_all_dummies = df_clean_final.drop(
     columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
              'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'])
-
-# GROUP BY INVOICE - get only 1 row per invoice
-# we only have binary variables, so max() will do the job
+# Group by Invoice. We only have binary variables, so max() will do the job
 df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
 df_clean_all_dummies.describe(include="all").transpose()
 
-# Rules supported in at least 10% of the transactions
-# (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_total = apriori(df_clean_all_dummies, min_support=0.1, use_colnames=True)
+# ASSOCIATIONS
+frequent_itemsets_all, relevant_rules_all, low_lift_rules_all, \
+    high_lift_rules_all = associations(df_clean_all_dummies,
+                                       min_support=0.15,
+                                       low_lift=0.95,
+                                       high_lift=2,
+                                       export_path="./Outputs/All_Total/")
 
-# EXPLORE FREQUENT_ITEMSETS
-# Add a column with the length
-frequent_itemsets_total['length'] = frequent_itemsets_total['itemsets'].apply(lambda x: len(x))
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
 
-# put dataframe to excel
-frequent_itemsets_total.to_excel("./Outputs/Total/frequent_itemsets_total.xlsx")
+# RELEVANT RULES
+relevant_rules_all.shape[0]  # number of rows
+relevant_rules_all["support"].plot.box()
+relevant_rules_all["confidence"].plot.box()
+network_rules(relevant_rules_all, 200)
 
-# Generate the association rules - by confidence
-rulesConfidence_total = association_rules(frequent_itemsets_total, metric="confidence", min_threshold=0.50)
-rulesConfidence_total.sort_values(by='confidence', ascending=False, inplace=True)
-# lets take a look
-rulesConfidence_total.head(10)
-rulesConfidence_total["antecedent support"].plot.box()
-rulesConfidence_total["confidence"].plot.box()
-rulesConfidence_total.shape  # 15342 rows
-network_rules(rulesConfidence_total, 500)
-# TODO: A big part of these rules are useless as they are influenced by non mutually exclusive variables (e.g. the
-#  confidence of a rule with antecedent {Mineral water, ...} and consequent {Drinks, ...} is always 1. Should we maybe
-#  do a separate analysis for different levels of granularity?
+# LOW-LIFT RULES
+low_lift_rules_all.shape[0]  # number of rows
+network_rules(low_lift_rules_all, "all")
 
-# get only rules with lift lower than 0.9 (check for substitute products)
-# TODO: Called association_rules again because previously with the filter we would be filtering for lift < 0.9 and
-#  confidence > 0.5. We might have C that happens rarely given A and that it's more probable to happen C by itself
-rulesLift_total_subs = association_rules(frequent_itemsets_total, metric="lift", min_threshold=0.0)
-rulesLift_total_subs = rulesLift_total_subs[rulesLift_total_subs.lift < 0.9]
-rulesLift_total_subs.shape  # 94 rows
-network_rules(rulesLift_total_subs, "all")
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
 
-# get only rules with a lift higher than 3
-# TODO: Called association_rules again because previously with the filter we would be filtering for lift > 3 and
-#  confidence > 0.5. We might have C that happens rarely given A and that it's more probable to happen C given A
-rulesLift_total_comp = association_rules(frequent_itemsets_total, metric="lift", min_threshold=3)
-rulesLift_total_comp.shape  # 3224 rows
-network_rules(rulesLift_total_comp, 200)
+del df_clean_all_dummies, frequent_itemsets_all, relevant_rules_all, low_lift_rules_all, high_lift_rules_all
 
-# put dataframe to excel
-rulesConfidence_total.to_excel("./Outputs/Total/rulesMetrics_total_confidence.xlsx")
-rulesLift_total_comp.to_excel("./Outputs/Total/rulesMetrics_total_comp.xlsx")
-rulesLift_total_subs.to_excel("./Outputs/Total/rulesMetrics_total_subs.xlsx")
-
-del df_clean_all_dummies, frequent_itemsets_total, rulesConfidence_total, rulesLift_total_comp, rulesLift_total_subs
-
-# ASSOCIATION RULES - ONLY DELIVERY ------------------------------------------------------------------------------------
-Delivery_df = df_clean_final[df_clean_final.IsDelivery == 1]
-Delivery_df.drop(
+# ASSOCIATION RULES - All Dummies Only Delivery ------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product columns
+df_clean_all_dummies = df_clean_final[df_clean_final.IsDelivery == 1].drop(
     columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
-             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'], inplace=True)
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'])
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
+df_clean_all_dummies.describe(include="all").transpose()
 
-# GROUP BY INVOICE - get only 1 row per invoice
-# we only have binary variables, so max() will do the job
-Delivery_df = Delivery_df.groupby('DocNumber').max()
+# ASSOCIATIONS
+frequent_itemsets_all_delivery, relevant_rules_all_delivery, low_lift_rules_all_delivery, \
+    high_lift_rules_all_delivery = associations(df_clean_all_dummies,
+                                                min_support=0.15,
+                                                low_lift=0.95,
+                                                high_lift=2,
+                                                export_path="./Outputs/All_Delivery/")
 
-# Rules supported in at least 10% of the transactions
-# (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_delivery = apriori(Delivery_df, min_support=0.1, use_colnames=True)
+# FREQUENT ITEMSETS
+frequent_itemsets_all_delivery.shape[0]  # number of rows
+frequent_itemsets_all_delivery.sort_values("support")
 
-# EXPLORE FREQUENT_ITEMSETS
-# Add a column with the length
-frequent_itemsets_delivery['length'] = frequent_itemsets_delivery['itemsets'].apply(lambda x: len(x))
+# RELEVANT RULES
+relevant_rules_all_delivery.shape[0]  # number of rows
+relevant_rules_all_delivery["support"].plot.box()
+relevant_rules_all_delivery["confidence"].plot.box()
+network_rules(relevant_rules_all_delivery, 200)
 
-# put dataframe to excel
-frequent_itemsets_delivery.to_excel("./Outputs/Delivery/frequent_itemsets_DELIVERY.xlsx")
+# LOW-LIFT RULES
+low_lift_rules_all_delivery.shape[0]  # number of rows -> 0 rows
+# network_rules(low_lift_rules_all_delivery, "all")
 
-# Generate the association rules - by confidence
+# HIGH-LIFT RULES
+high_lift_rules_all_delivery.shape[0]  # number of rows
+network_rules(high_lift_rules_all_delivery, 200)
 
-rulesConfidence_delivery = association_rules(frequent_itemsets_delivery, metric="confidence", min_threshold=0.50)
-rulesConfidence_delivery.sort_values(by='confidence', ascending=False, inplace=True)
-# lets take a look
-rulesConfidence_delivery.head(10)
-rulesConfidence_delivery.shape  # 28097 rows
-network_rules(rulesConfidence_delivery, 500)
+del df_clean_all_dummies, frequent_itemsets_all_delivery, relevant_rules_all_delivery, low_lift_rules_all_delivery, \
+    high_lift_rules_all_delivery
 
-# get only rules with lift lower than 0.9 (check for substitute products)
-rulesLift_delivery_subs = association_rules(frequent_itemsets_delivery, metric="lift", min_threshold=0.0)
-rulesLift_delivery_subs = rulesLift_delivery_subs[rulesLift_delivery_subs.lift < 0.9]
-rulesLift_delivery_subs.shape  # 28 rows
-network_rules(rulesLift_delivery_subs, "all")
-
-# get only rules with a lift higher than 3
-rulesLift_delivery_comp = association_rules(frequent_itemsets_delivery, metric="lift", min_threshold=3)
-rulesLift_delivery_comp.shape  # 5466 rows
-network_rules(rulesLift_delivery_comp, 500)
-
-# put dataframe to excel
-rulesConfidence_delivery.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_confidence.xlsx")
-rulesLift_delivery_comp.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_comp.xlsx")
-rulesLift_delivery_subs.to_excel("./Outputs/Delivery/rulesMetrics_DELIVERY_subs.xlsx")
-
-del Delivery_df, frequent_itemsets_delivery, rulesConfidence_delivery, rulesLift_delivery_comp, rulesLift_delivery_subs
-
-# ASSOCIATION RULES - ONLY DINE INN ------------------------------------------------------------------------------------
-DineInn_df = df_clean_final[df_clean_final.IsDelivery == 0]
-DineInn_df.drop(
+# ASSOCIATION RULES - All Dummies Only Dine Inn ------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product columns
+df_clean_all_dummies = df_clean_final[df_clean_final.IsDelivery == 0].drop(
     columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
-             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'], inplace=True)
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'])
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
+df_clean_all_dummies.describe(include="all").transpose()
 
-# GROUP BY INVOICE - get only 1 row per invoice
-# we only have binary variables, so max() will do the job
-DineInn_df = DineInn_df.groupby('DocNumber').max()
+# ASSOCIATIONS
+frequent_itemsets_all_dineinn, relevant_rules_all_dineinn, low_lift_rules_all_dineinn, \
+    high_lift_rules_all_dineinn = associations(df_clean_all_dummies,
+                                               min_support=0.15,
+                                               low_lift=0.95,
+                                               high_lift=2,
+                                               export_path="./Outputs/All_DineInn/")
 
-# Rules supported in at least 10% of the transactions
-# (more info at http://rasbt.github.io/mlxtend/user_guide/frequent_patterns/apriori/)
-frequent_itemsets_dineinn = apriori(DineInn_df, min_support=0.1, use_colnames=True)
+# FREQUENT ITEMSETS
+frequent_itemsets_all_dineinn.shape[0]  # number of rows
+frequent_itemsets_all_dineinn.sort_values("support")
 
-# EXPLORE FREQUENT_ITEMSETS
-# Add a column with the length
-frequent_itemsets_dineinn['length'] = frequent_itemsets_dineinn['itemsets'].apply(lambda x: len(x))
+# RELEVANT RULES
+relevant_rules_all_dineinn.shape[0]  # number of rows
+relevant_rules_all_dineinn["support"].plot.box()
+relevant_rules_all_dineinn["confidence"].plot.box()
+network_rules(relevant_rules_all_dineinn, 200)
 
-# put dataframe to excel
-frequent_itemsets_dineinn.to_excel("./Outputs/DineInn/frequent_itemsets_DINE-INN.xlsx")
+# LOW-LIFT RULES
+low_lift_rules_all_dineinn.shape[0]  # number of rows
+network_rules(low_lift_rules_all_dineinn, "all")
 
-# Generate the association rules - by confidence
-rulesConfidence_dineinn = association_rules(frequent_itemsets_dineinn, metric="confidence", min_threshold=0.50)
-rulesConfidence_dineinn.sort_values(by='confidence', ascending=False, inplace=True)
-# lets take a look
-rulesConfidence_dineinn.head(10)
-rulesConfidence_dineinn.shape  # 107847 rows
-network_rules(rulesConfidence_dineinn, 500)
+# HIGH-LIFT RULES
+high_lift_rules_all_dineinn.shape[0]  # number of rows
+network_rules(high_lift_rules_all_dineinn, 200)
 
-# get only rules with lift lower than 0.9 (check for substitute products)
-rulesLift_dineinn_subs = association_rules(frequent_itemsets_dineinn, metric="lift", min_threshold=0.0)
-rulesLift_dineinn_subs = rulesLift_dineinn_subs[rulesLift_dineinn_subs.lift < 0.9]
-rulesLift_dineinn_subs.shape  # 484 rows
-network_rules(rulesLift_dineinn_subs, "all")
-
-# get only rules with a lift higher than 3
-rulesLift_dineinn_comp = association_rules(frequent_itemsets_dineinn, metric="lift", min_threshold=3)
-rulesLift_dineinn_comp.shape  # 20046 rows
-network_rules(rulesLift_dineinn_comp, 500)
-
-# put dataframe to excel
-rulesConfidence_dineinn.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_confidence.xlsx")
-rulesLift_dineinn_comp.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_comp.xlsx")
-rulesLift_dineinn_subs.to_excel("./Outputs/DineInn/rulesMetrics_DINE-INN_subs.xlsx")
-
-del DineInn_df, frequent_itemsets_dineinn, rulesConfidence_dineinn, rulesLift_dineinn_comp, rulesLift_dineinn_subs
+del df_clean_all_dummies, frequent_itemsets_all_dineinn, relevant_rules_all_dineinn, low_lift_rules_all_dineinn, \
+    high_lift_rules_all_dineinn
