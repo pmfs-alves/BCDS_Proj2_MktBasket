@@ -41,15 +41,13 @@ df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'WINE' if 'WINE' in x else
 # check if everything is ok
 df1.ProductFamily.unique()
 
-# If we want one single family for all Sushi
-# SEE IF WE WANT THIS
+# We want one single family for all Sushi
 df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'SUSHI' if 'SUSHI' in x else x)
 
-# If we want one single family for all indian food (maybe who eats indian, eats something else?)
-# SEE IF WE WANT THIS
+# We want one single family for all indian food (maybe who eats indian, eats something else?)
 df1.ProductFamily = df1.ProductFamily.apply(lambda x: 'INDIAN' if 'IND' in x else x)
 
-
+# --------------------EXPLORATORY ANALYSIS-----------
 df1.describe(include="all")
 # Checking missing values
 # só customer city e customer since têm NULLS
@@ -184,7 +182,7 @@ df1.ProductDesignation.unique()
 # How many?
 df1.ProductDesignation.nunique()  # 255
 
-# Special Requests
+# See Special Requests with No
 SpRequestsNO = []
 for product in list(df1.ProductDesignation.unique()):
     if ' NO ' in product:
@@ -192,6 +190,7 @@ for product in list(df1.ProductDesignation.unique()):
         SpRequestsNO.append(product_n)
 SpRequestsNO
 
+# See Special Requests with Extra
 SpRequestsEXTRA = []
 for product in list(df1.ProductDesignation.unique()):
     if ' EXTRA ' in product:
@@ -223,6 +222,7 @@ family_deliv = df1.drop_duplicates(subset=['DocNumber', 'ProductDesignation'], k
 # merge the 2 df's created above
 df_clean = family_deliv.merge(qty_amount, how='left', on=['DocNumber', 'ProductDesignation'])
 
+del SpRequestsEXTRA, SpRequestsNO,a,ax1, familydf, fig, linwhismax, linwhismin, maxval,product,product_n
 # FEATURE ENGINEERING --------------------------------------------------------------------------------------------------
 
 # CREATE WEEKDAY ATTRIBUTE
@@ -283,18 +283,26 @@ df_clean['Weekend'] = df_clean.Weekday.apply(lambda x: 1 if x in ['Saturday', 'S
 # do web scrapping - https://www.wunderground.com/history/monthly/cy/τύμβου/LCEN/date/2018-7
 
 # Delete useless variables
-del family_deliv, holidays, holidays_date, qty_amount, weekDays, columns, df1, df, norm_cities
+del holidays, holidays_date, qty_amount, weekDays, columns, df1, df, norm_cities, family_deliv
 
 # Save df to csv file, to be explored in POWER BI
 df_clean.to_csv(r'./data/data_cyprus.csv', index=False)
 
-# ONE HOT ENCODING -----------------------------------------------------------------------------------------------------
+# ONE HOT ENCODING AND DATA PREPARATION -----------------------------------------------------------------------------------------------------
+# save all column names
 columns = df_clean.columns.to_list()
 
 # Para usarmos quando quisermos usar apenas algumas variáveis para as association rules
 product_cols = ['ProductDesignation_' + prod for prod in list(df_clean.ProductDesignation.unique())]
-#family_cols = list(df_clean.ProductFamily.unique())
+family_cols = ['ProductFamily_' + fam for fam in list(df_clean.ProductFamily.unique())]
+# create list with dummy columns from Season
+season_cols = ['Season_' + prod for prod in list(df_clean.Season.unique())]
+# create list with dummy columns from Meal
+meal_cols = ['Meal_' + prod for prod in list(df_clean.Meal.unique())]
+# create list with dummy columns from Weekday
+weekday_cols = ['Weekday_' + day for day in list(df_clean.Weekday.unique())]
 
+# change type of the categorical new attributes
 df_clean['Season'] = df_clean['Season'].astype('category')
 df_clean['Meal'] = df_clean['Meal'].astype('category')
 df_clean['Weekday'] = df_clean['Weekday'].astype('category')
@@ -308,8 +316,9 @@ complementary = ['ProductDesignation_'+ elem for elem in complementary]
 df_clean.ProductDesignation.str.contains('TSANTA').sum() # 1749
 df_clean[df_clean.IsDelivery==0].ProductDesignation.str.contains('TSANTA').sum() # 0
 df_clean[df_clean.IsDelivery==1].ProductDesignation.str.contains('TSANTA').sum() # 1749
-
 # we'll remove tsanta from the analysis as we already saw it means bags and is used for deliveries and we consider it doesn't add any valuable info
+# we'll also drop Water as it is bought in almost all invoices from Dine Inn (it is not bough in Deliveries as we saw in PowerBI)
+# we'll drop the delivery charge as it is an extra charged for deliveries
 
 # Get dummies and dropping useless/ redudant columns
 df_clean_final = pd.get_dummies(df_clean, columns=['Season', 'Meal', 'Weekday', 'ProductFamily', 'ProductDesignation']).\
@@ -318,15 +327,7 @@ df_clean_final = pd.get_dummies(df_clean, columns=['Season', 'Meal', 'Weekday', 
 for i in ["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT", "ProductDesignation_TSANTA"]+complementary:
     product_cols.remove(i)
 
-# TODO: remove duplicated rules (e.g. A1={a,b,c,d} and A2={a,b,d} and C1=C2). Can be done by finding common subset.
-#  Explore frozenset datatype https://docs.python.org/3.6/library/stdtypes.html#frozenset
-# SE A1 NÃO FOR UMA BOA ASSOCIAÇÃO (LOW CONFIDENCE POR EXEMPLO), QUEREMOS REMOVÊ-LA E DEIXAR O A2 (SE O A2 FOR BOM)
-# SE A1 FOR UMA BOA ASSOCIAÇÃO QUEREMOS REMOVER TUDO O QUE ESTÁ PARA BAIXO, CERT0? Temos que pensar nisto
-#  TODO: plot the network with a sample of the rules but maintaining every single consequent
-# TODO: see variables and think on what antecedents/ consequents would be interesting to explore
-# TODO: color each node according to product family
-
-
+# create function to create a network graph
 def network_rules(rulesdf, nrules=100, save_path=None):
     """Plot a basic network graph of the confidence rules. Arrows point to consequent.
     - rulesdf: association rules dataframe
@@ -361,7 +362,7 @@ def network_rules(rulesdf, nrules=100, save_path=None):
         fig.show()
 
 
-def associations(invoice_df, min_support=0.05, min_confidence=0.5, low_lift=0.9, high_lift=3, export_path=None):
+def associations(invoice_df, min_support=0.05, min_confidence=0.5, high_lift=2, export_path=None):
     """
     Applies the apriori algorithm to find the most frequent itemsets and afterwards looks for the most relevant,
     low lift and high lift rules.
@@ -381,37 +382,32 @@ def associations(invoice_df, min_support=0.05, min_confidence=0.5, low_lift=0.9,
     relevant_rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence)
     relevant_rules.sort_values(by='confidence', ascending=False, inplace=True)
 
-    low_lift_rules = association_rules(frequent_itemsets, metric="lift", min_threshold=0)
-    low_lift_rules = low_lift_rules[low_lift_rules.lift < low_lift]
-    low_lift_rules.sort_values(by='lift', ascending=True, inplace=True)
-
     high_lift_rules = association_rules(frequent_itemsets, metric="lift", min_threshold=high_lift)
     high_lift_rules.sort_values(by='lift', ascending=False, inplace=True)
 
     if export_path:
         frequent_itemsets.to_excel(export_path + "frequent_itemsets.xlsx")
         relevant_rules.to_excel(export_path + "relevant_rules.xlsx")
-        low_lift_rules.to_excel(export_path + "low_lift_rules.xlsx")
         high_lift_rules.to_excel(export_path + "high_lift_rules.xlsx")
 
-    return frequent_itemsets, relevant_rules, low_lift_rules, high_lift_rules
+    return frequent_itemsets, relevant_rules, high_lift_rules
 
+del df_clean,i,complementary,columns
 
-# ASSOCIATION RULES - Product Dummies ----------------------------------------------------------------------------------
+# ASSOCIATION RULES - All Product Dummies ----------------------------------------------------------------------------------
 # CREATE INVOICE DF
 # Filter Product columns
 df_clean_final_products = df_clean_final[["DocNumber"] + product_cols]
 # Clean columns names
 df_clean_final_products.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_final_products.columns))
+
 # Group by Invoice. We only have binary variables, so max() will do the job
 df_clean_product_dummies = df_clean_final_products.groupby('DocNumber').max()
 df_clean_product_dummies.describe(include="all").transpose()
 
 # ASSOCIATIONS
-frequent_itemsets_products, relevant_rules_products, low_lift_rules_products, \
+frequent_itemsets_products, relevant_rules_products, \
     high_lift_rules_products = associations(df_clean_product_dummies,
-                                            low_lift=1,
-                                            high_lift=2,
                                             export_path="./Outputs/Products_Total/")
 
 # FREQUENT ITEMSETS
@@ -424,16 +420,22 @@ relevant_rules_products["support"].plot.box()
 relevant_rules_products["confidence"].plot.box()
 network_rules(relevant_rules_products, "all")
 
-# LOW-LIFT RULES
-low_lift_rules_products.shape[0]  # number of rows -> No rules with lift < 1
-# network_rules(low_lift_rules_products, "all")
-
 # HIGH-LIFT RULES
 high_lift_rules_products.shape[0]  # number of rows
 network_rules(high_lift_rules_products, "all")
 
-del df_clean_product_dummies, frequent_itemsets_products, relevant_rules_products, low_lift_rules_products, \
-    high_lift_rules_products, i, complementary
+# SUBSTITUTE PRODUCTS
+# To see substitute products we decided to put a minimum support of 0.001 and then check the rules with a lower lift
+# We chose a very low support because if they are substitutes they should not be seen together.
+#  We will not carry this analysis to the next attempts because this piece of code takes a long time to run and we don't have enough computer power
+# The substitute products we found and refered in the report were found here
+# Uncomment the next lines to get the substitutes analysis (takes a lot of time to run)
+
+#frequent_itemsets = apriori(df_clean_product_dummies, min_support=0.001, use_colnames=True)
+#low_lift_rules = association_rules(frequent_itemsets, metric="lift", min_threshold=0)
+
+
+del df_clean_product_dummies, frequent_itemsets_products, relevant_rules_products, high_lift_rules_products, df_clean_final_products
 
 # ASSOCIATION RULES - Product Dummies Only Delivery --------------------------------------------------------------------
 # CREATE INVOICE DF
@@ -446,11 +448,8 @@ df_clean_product_dummies = df_clean_final_products.groupby('DocNumber').max()
 df_clean_product_dummies.describe(include="all").transpose()
 
 # ASSOCIATIONS
-frequent_itemsets_products_delivery, relevant_rules_products_delivery, low_lift_rules_products_delivery, \
+frequent_itemsets_products_delivery, relevant_rules_products_delivery, \
     high_lift_rules_products_delivery = associations(df_clean_product_dummies,
-                                                     min_confidence=0.5,
-                                                     low_lift=1,
-                                                     high_lift=2,
                                                      export_path="./Outputs/Products_Delivery/")
 
 # FREQUENT ITEMSETS
@@ -463,16 +462,12 @@ relevant_rules_products_delivery["support"].plot.box()
 relevant_rules_products_delivery["confidence"].plot.box()
 network_rules(relevant_rules_products_delivery, "all")
 
-# LOW-LIFT RULES
-low_lift_rules_products_delivery.shape[0]  # number of rows -> no rules with lift < 1
-# network_rules(low_lift_rules_products_delivery, "all")
-
 # HIGH-LIFT RULES
 high_lift_rules_products_delivery.shape[0]  # number of rows
 network_rules(high_lift_rules_products_delivery, "all")
 
 del df_clean_product_dummies, frequent_itemsets_products_delivery, relevant_rules_products_delivery,\
-    low_lift_rules_products_delivery, high_lift_rules_products_delivery
+ high_lift_rules_products_delivery, df_clean_final_products
 
 # ASSOCIATION RULES - Product Dummies DineInn --------------------------------------------------------------------------
 # CREATE INVOICE DF
@@ -485,10 +480,8 @@ df_clean_product_dummies = df_clean_final_products.groupby('DocNumber').max()
 df_clean_product_dummies.describe(include="all").transpose()
 
 # ASSOCIATIONS
-frequent_itemsets_products_dineinn, relevant_rules_products_dineinn, low_lift_rules_products_dineinn, \
+frequent_itemsets_products_dineinn, relevant_rules_products_dineinn, \
     high_lift_rules_products_dineinn = associations(df_clean_product_dummies,
-                                                    low_lift=1,
-                                                    high_lift=2,
                                                     export_path="./Outputs/Products_DineInn/")
 
 # FREQUENT ITEMSETS
@@ -501,16 +494,12 @@ relevant_rules_products_dineinn["support"].plot.box()
 relevant_rules_products_dineinn["confidence"].plot.box()
 network_rules(relevant_rules_products_dineinn, "all")
 
-# LOW-LIFT RULES
-low_lift_rules_products_dineinn.shape[0]  # number of rows -> no rules with lift < 1
-# network_rules(low_lift_rules_products_dineinn, "all")
-
 # HIGH-LIFT RULES
 high_lift_rules_products_dineinn.shape[0]  # number of rows
 network_rules(high_lift_rules_products_dineinn, "all")
 
 del df_clean_product_dummies, frequent_itemsets_products_dineinn, relevant_rules_products_dineinn, \
-    low_lift_rules_products_dineinn, high_lift_rules_products_dineinn
+    high_lift_rules_products_dineinn, df_clean_final_products
 
 # ASSOCIATION RULES - All Dummies --------------------------------------------------------------------------------------
 # CREATE INVOICE DF
@@ -518,15 +507,17 @@ del df_clean_product_dummies, frequent_itemsets_products_dineinn, relevant_rules
 df_clean_all_dummies = df_clean_final.drop(
     columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
              'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'])
+# Clean columns names
+df_clean_all_dummies.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_all_dummies.columns))
+
 # Group by Invoice. We only have binary variables, so max() will do the job
 df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
 df_clean_all_dummies.describe(include="all").transpose()
 
 # ASSOCIATIONS
-frequent_itemsets_all, relevant_rules_all, low_lift_rules_all, \
+frequent_itemsets_all, relevant_rules_all,  \
     high_lift_rules_all = associations(df_clean_all_dummies,
                                        min_support=0.15,
-                                       low_lift=0.95,
                                        high_lift=2,
                                        export_path="./Outputs/All_Total/")
 
@@ -540,90 +531,324 @@ relevant_rules_all["support"].plot.box()
 relevant_rules_all["confidence"].plot.box()
 network_rules(relevant_rules_all, 200)
 
-# LOW-LIFT RULES
-low_lift_rules_all.shape[0]  # number of rows
-network_rules(low_lift_rules_all, "all")
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+del df_clean_all_dummies, frequent_itemsets_all, relevant_rules_all, high_lift_rules_all
+
+
+
+# ASSOCIATION RULES - Product + Meal --------------------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product and meal columns
+df_clean_prod_meal = df_clean_final.drop(
+    columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour','Weekend','Holiday']+season_cols+family_cols+weekday_cols)
+
+# Clean columns names
+df_clean_prod_meal.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_prod_meal.columns))
+
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_prod_meal = df_clean_prod_meal.groupby('DocNumber').max()
+df_clean_prod_meal.describe(include="all").transpose()
+
+# as the 2 classes are so unbalanced we have to split the dataset and check the rules separately
+df_clean_prod_meal.Lunch[df_clean_prod_meal.Lunch==1].sum() # 870
+df_clean_prod_meal.Dinner[df_clean_prod_meal.Dinner==1].sum() # 10 277
+
+# ASSOCIATIONS LUNCH
+df_clean_prod_lunch = df_clean_prod_meal[df_clean_prod_meal.Lunch==1]
+df_clean_prod_lunch.drop(columns=['Lunch','Dinner'], inplace=True)
+
+frequent_itemsets_all, relevant_rules_lunch, \
+    high_lift_rules_all = associations(df_clean_prod_lunch,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_lunch.shape[0]  # number of rows
+relevant_rules_lunch["support"].plot.box()
+relevant_rules_lunch["confidence"].plot.box()
+network_rules(relevant_rules_lunch, 200)
 
 # HIGH-LIFT RULES
 high_lift_rules_all.shape[0]  # number of rows
 network_rules(high_lift_rules_all, 200)
 
-del df_clean_all_dummies, frequent_itemsets_all, relevant_rules_all, low_lift_rules_all, high_lift_rules_all
 
-# ASSOCIATION RULES - All Dummies Only Delivery ------------------------------------------------------------------------
-# CREATE INVOICE DF
-# Filter Product columns
-df_clean_all_dummies = df_clean_final[df_clean_final.IsDelivery == 1].drop(
-    columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
-             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'])
-# Group by Invoice. We only have binary variables, so max() will do the job
-df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
-df_clean_all_dummies.describe(include="all").transpose()
+# ASSOCIATIONS DINNER
 
-# ASSOCIATIONS
-frequent_itemsets_all_delivery, relevant_rules_all_delivery, low_lift_rules_all_delivery, \
-    high_lift_rules_all_delivery = associations(df_clean_all_dummies,
-                                                min_support=0.15,
-                                                low_lift=0.95,
-                                                high_lift=2,
-                                                export_path="./Outputs/All_Delivery/")
+df_clean_prod_dinner = df_clean_prod_meal[df_clean_prod_meal.Dinner==1]
+df_clean_prod_dinner.drop(columns=['Lunch','Dinner'], inplace=True)
+
+frequent_itemsets_all, relevant_rules_dinner, \
+    high_lift_rules_all = associations(df_clean_prod_dinner,
+                                       export_path="./Outputs/All_Total/")
 
 # FREQUENT ITEMSETS
-frequent_itemsets_all_delivery.shape[0]  # number of rows
-frequent_itemsets_all_delivery.sort_values("support")
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
 
 # RELEVANT RULES
-relevant_rules_all_delivery.shape[0]  # number of rows
-relevant_rules_all_delivery["support"].plot.box()
-relevant_rules_all_delivery["confidence"].plot.box()
-network_rules(relevant_rules_all_delivery, 200)
-
-# LOW-LIFT RULES
-low_lift_rules_all_delivery.shape[0]  # number of rows -> 0 rows
-# network_rules(low_lift_rules_all_delivery, "all")
+relevant_rules_dinner.shape[0]  # number of rows
+relevant_rules_dinner["support"].plot.box()
+relevant_rules_dinner["confidence"].plot.box()
+network_rules(relevant_rules_dinner, 200)
 
 # HIGH-LIFT RULES
-high_lift_rules_all_delivery.shape[0]  # number of rows
-network_rules(high_lift_rules_all_delivery, 200)
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
 
-del df_clean_all_dummies, frequent_itemsets_all_delivery, relevant_rules_all_delivery, low_lift_rules_all_delivery, \
-    high_lift_rules_all_delivery
+del df_clean_prod_dinner, df_clean_prod_lunch, df_clean_prod_meal, frequent_itemsets_all, relevant_rules_lunch, relevant_rules_dinner, high_lift_rules_all
 
-# ASSOCIATION RULES - All Dummies Only Dine Inn ------------------------------------------------------------------------
+# ASSOCIATION RULES - Product + Weekend --------------------------------------------------------------------------------------
 # CREATE INVOICE DF
-# Filter Product columns
-df_clean_all_dummies = df_clean_final[df_clean_final.IsDelivery == 0].drop(
+# Filter Product and meal columns
+df_clean_prod_Weekend = df_clean_final.drop(
     columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
-             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour'])
-# Group by Invoice. We only have binary variables, so max() will do the job
-df_clean_all_dummies = df_clean_all_dummies.groupby('DocNumber').max()
-df_clean_all_dummies.describe(include="all").transpose()
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour','Holiday']+season_cols+family_cols+weekday_cols+meal_cols)
 
-# ASSOCIATIONS
-frequent_itemsets_all_dineinn, relevant_rules_all_dineinn, low_lift_rules_all_dineinn, \
-    high_lift_rules_all_dineinn = associations(df_clean_all_dummies,
-                                               min_support=0.15,
-                                               low_lift=0.95,
-                                               high_lift=2,
-                                               export_path="./Outputs/All_DineInn/")
+# Clean columns names
+df_clean_prod_Weekend.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_prod_Weekend.columns))
+
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_prod_Weekend = df_clean_prod_Weekend.groupby('DocNumber').max()
+df_clean_prod_Weekend.describe(include="all").transpose()
+
+# as the 2 classes are so unbalanced we have to split the dataset and check the rules separately
+df_clean_prod_Weekend.Weekend.value_counts() # 0 - 7465; 1 - 3682
+
+# ASSOCIATIONS Week
+df_clean_prod_week = df_clean_prod_Weekend[df_clean_prod_Weekend.Weekend==0]
+df_clean_prod_week.drop(columns=['Weekend'], inplace=True)
+
+frequent_itemsets_all, relevant_rules_week,  \
+    high_lift_rules_all = associations(df_clean_prod_week,
+                                       export_path="./Outputs/All_Total/")
 
 # FREQUENT ITEMSETS
-frequent_itemsets_all_dineinn.shape[0]  # number of rows
-frequent_itemsets_all_dineinn.sort_values("support")
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
 
 # RELEVANT RULES
-relevant_rules_all_dineinn.shape[0]  # number of rows
-relevant_rules_all_dineinn["support"].plot.box()
-relevant_rules_all_dineinn["confidence"].plot.box()
-network_rules(relevant_rules_all_dineinn, 200)
-
-# LOW-LIFT RULES
-low_lift_rules_all_dineinn.shape[0]  # number of rows
-network_rules(low_lift_rules_all_dineinn, "all")
+relevant_rules_week.shape[0]  # number of rows
+relevant_rules_week["support"].plot.box()
+relevant_rules_week["confidence"].plot.box()
+network_rules(relevant_rules_week, 200)
 
 # HIGH-LIFT RULES
-high_lift_rules_all_dineinn.shape[0]  # number of rows
-network_rules(high_lift_rules_all_dineinn, 200)
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
 
-del df_clean_all_dummies, frequent_itemsets_all_dineinn, relevant_rules_all_dineinn, low_lift_rules_all_dineinn, \
-    high_lift_rules_all_dineinn
+
+# ASSOCIATIONS weekend
+
+df_clean_prod_weekend = df_clean_prod_Weekend[df_clean_prod_Weekend.Weekend==1]
+df_clean_prod_weekend.drop(columns=['Weekend'], inplace=True)
+
+frequent_itemsets_all, relevant_rules_weekend, \
+    high_lift_rules_all = associations(df_clean_prod_weekend,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_weekend.shape[0]  # number of rows
+relevant_rules_weekend["support"].plot.box()
+relevant_rules_weekend["confidence"].plot.box()
+network_rules(relevant_rules_weekend, 200)
+
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+del df_clean_prod_weekend, df_clean_prod_Weekend, df_clean_prod_week, frequent_itemsets_all, relevant_rules_weekend, relevant_rules_week, high_lift_rules_all
+
+# ASSOCIATION RULES - Product + Holiday --------------------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product and meal columns
+df_clean_prod_Holiday = df_clean_final.drop(
+    columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour','Weekend']+season_cols+family_cols+weekday_cols+meal_cols)
+
+# Clean columns names
+df_clean_prod_Holiday.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_prod_Holiday.columns))
+
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_prod_Holiday = df_clean_prod_Holiday.groupby('DocNumber').max()
+df_clean_prod_Holiday.describe(include="all").transpose()
+
+# as the 2 classes are so unbalanced we have to split the dataset and check the rules separately
+df_clean_prod_Holiday.Holiday.value_counts() # 0 - 10 754; 1 - 393
+
+# ASSOCIATIONS holiday
+df_clean_prod_holiday = df_clean_prod_Holiday[df_clean_prod_Holiday.Holiday==1]
+df_clean_prod_holiday.drop(columns=['Holiday'], inplace=True)
+
+frequent_itemsets_all, relevant_rules_holiday, \
+    high_lift_rules_all = associations(df_clean_prod_holiday,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_holiday.shape[0]  # number of rows
+relevant_rules_holiday["support"].plot.box()
+relevant_rules_holiday["confidence"].plot.box()
+network_rules(relevant_rules_holiday, 200)
+
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+
+# ASSOCIATIONS not holiday
+
+df_clean_prod_notholiday = df_clean_prod_Holiday[df_clean_prod_Holiday.Holiday==0]
+df_clean_prod_notholiday.drop(columns=['Holiday'], inplace=True)
+
+frequent_itemsets_all, relevant_rules_notholiday, \
+    high_lift_rules_all = associations(df_clean_prod_notholiday,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_notholiday.shape[0]  # number of rows
+relevant_rules_notholiday["support"].plot.box()
+relevant_rules_notholiday["confidence"].plot.box()
+network_rules(relevant_rules_notholiday, 200)
+
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+del df_clean_prod_holiday, df_clean_prod_Holiday, df_clean_prod_notholiday, frequent_itemsets_all, high_lift_rules_all, relevant_rules_holiday, relevant_rules_notholiday
+
+
+# ASSOCIATION RULES - Product + Season --------------------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product and meal columns
+df_clean_prod_Season = df_clean_final.drop(
+    columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour','Weekend', 'Holiday']+family_cols+weekday_cols+meal_cols)
+
+# Clean columns names
+df_clean_prod_Season.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_prod_Season.columns))
+
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_prod_Season = df_clean_prod_Season.groupby('DocNumber').max()
+df_clean_prod_Season.describe(include="all").transpose()
+
+# check the observations per class
+df_clean_prod_Season.Autumn[df_clean_prod_Season.Autumn==1].sum() # 2904
+df_clean_prod_Season.Winter[df_clean_prod_Season.Winter==1].sum() # 3079
+df_clean_prod_Season.Spring[df_clean_prod_Season.Spring==1].sum() # 2636
+df_clean_prod_Season.Summer[df_clean_prod_Season.Summer==1].sum() # 2528
+
+# ASSOCIATIONS 
+
+frequent_itemsets_all, relevant_rules_season, \
+    high_lift_rules_all = associations(df_clean_prod_Season,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_season.shape[0]  # number of rows
+relevant_rules_season["support"].plot.box()
+relevant_rules_season["confidence"].plot.box()
+network_rules(relevant_rules_season, 200)
+
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+del df_clean_prod_Season, frequent_itemsets_all, high_lift_rules_all, relevant_rules_season
+
+
+# ASSOCIATION RULES - Product + Weekdays --------------------------------------------------------------------------------------
+# CREATE INVOICE DF
+# Filter Product and meal columns
+df_clean_prod_Weekdays = df_clean_final.drop(
+    columns=['EmployeeID', 'IsDelivery', 'Pax', 'CustomerID', 'CustomerSince', 'Latitude', 'Longitude', 'CustomerCity',
+             'Distance', 'Qty', 'TotalAmount', 'InvoiceDateHourTime', 'InvoiceHour','Weekend', 'Holiday']+family_cols+season_cols+meal_cols)
+
+# Clean columns names
+df_clean_prod_Weekdays.columns = list(map(lambda x: x.split('_')[-1].strip(), df_clean_prod_Weekdays.columns))
+
+# Group by Invoice. We only have binary variables, so max() will do the job
+df_clean_prod_Weekdays = df_clean_prod_Weekdays.groupby('DocNumber').max()
+df_clean_prod_Weekdays.describe(include="all").transpose()
+
+# check the observations per class
+df_clean_prod_Weekdays.Monday[df_clean_prod_Weekdays.Monday==1].sum() # 978
+df_clean_prod_Weekdays.Tuesday[df_clean_prod_Weekdays.Tuesday==1].sum() # 906
+df_clean_prod_Weekdays.Wednesday[df_clean_prod_Weekdays.Wednesday==1].sum() # 2213
+df_clean_prod_Weekdays.Thursday[df_clean_prod_Weekdays.Thursday==1].sum() # 1123
+df_clean_prod_Weekdays.Friday[df_clean_prod_Weekdays.Friday==1].sum() # 2245
+df_clean_prod_Weekdays.Saturday[df_clean_prod_Weekdays.Saturday==1].sum() # 2395
+df_clean_prod_Weekdays.Sunday[df_clean_prod_Weekdays.Sunday==1].sum() # 1287
+
+# ASSOCIATIONS  wednesday
+df_clean_prod_wednesday = df_clean_prod_Weekdays[df_clean_prod_Weekdays.Wednesday==1]
+weekday_cols_noprefix = [i.split('_')[-1] for i in weekday_cols]
+df_clean_prod_wednesday.drop(columns=weekday_cols_noprefix, inplace=True)
+
+frequent_itemsets_all, relevant_rules_wednesday, \
+    high_lift_rules_all = associations(df_clean_prod_wednesday,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_wednesday.shape[0]  # number of rows
+relevant_rules_wednesday["support"].plot.box()
+relevant_rules_wednesday["confidence"].plot.box()
+network_rules(relevant_rules_wednesday, 200)
+
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+del df_clean_prod_wednesday, relevant_rules_wednesday, high_lift_rules_all, frequent_itemsets_all
+
+# ASSOCIATIONS  friday
+df_clean_prod_friday = df_clean_prod_Weekdays[df_clean_prod_Weekdays.Friday==1]
+weekday_cols_noprefix = [i.split('_')[-1] for i in weekday_cols]
+df_clean_prod_friday.drop(columns=weekday_cols_noprefix, inplace=True)
+
+frequent_itemsets_all, relevant_rules_friday, \
+    high_lift_rules_all = associations(df_clean_prod_friday,
+                                       export_path="./Outputs/All_Total/")
+
+# FREQUENT ITEMSETS
+frequent_itemsets_all.shape[0]  # number of rows
+frequent_itemsets_all.sort_values("support")
+
+# RELEVANT RULES
+relevant_rules_friday.shape[0]  # number of rows
+relevant_rules_friday["support"].plot.box()
+relevant_rules_friday["confidence"].plot.box()
+network_rules(relevant_rules_friday, 200)
+
+# HIGH-LIFT RULES
+high_lift_rules_all.shape[0]  # number of rows
+network_rules(high_lift_rules_all, 200)
+
+
+del df_clean_prod_friday, relevant_rules_friday, high_lift_rules_all, frequent_itemsets_all, df_clean_prod_Weekdays
