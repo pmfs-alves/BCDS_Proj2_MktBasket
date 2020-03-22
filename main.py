@@ -293,17 +293,29 @@ columns = df_clean.columns.to_list()
 
 # Para usarmos quando quisermos usar apenas algumas variáveis para as association rules
 product_cols = ['ProductDesignation_' + prod for prod in list(df_clean.ProductDesignation.unique())]
-# family_cols = list(df_clean.ProductFamily.unique())
+#family_cols = list(df_clean.ProductFamily.unique())
 
 df_clean['Season'] = df_clean['Season'].astype('category')
 df_clean['Meal'] = df_clean['Meal'].astype('category')
 df_clean['Weekday'] = df_clean['Weekday'].astype('category')
 
+# get all complementary products
+# we will remove them from the analysis as people don't choose them, they are offered
+complementary = list(df_clean.ProductDesignation[(df_clean.ProductDesignation.str.contains('COMPLIMENTARY')) | (df_clean.ProductDesignation.str.contains('COMPLEMENTARY'))].unique())
+complementary = ['ProductDesignation_'+ elem for elem in complementary]
+
+#check that santa only appears in delivery invoices (tsanta means bag)
+df_clean.ProductDesignation.str.contains('TSANTA').sum() # 1749
+df_clean[df_clean.IsDelivery==0].ProductDesignation.str.contains('TSANTA').sum() # 0
+df_clean[df_clean.IsDelivery==1].ProductDesignation.str.contains('TSANTA').sum() # 1749
+
+# we'll remove tsanta from the analysis as we already saw it means bags and is used for deliveries and we consider it doesn't add any valuable info
+
 # Get dummies and dropping useless/ redudant columns
 df_clean_final = pd.get_dummies(df_clean, columns=['Season', 'Meal', 'Weekday', 'ProductFamily', 'ProductDesignation']).\
-    drop(["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT"], axis=1)
+    drop(["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT", "ProductDesignation_TSANTA"]+complementary, axis=1)
 
-for i in ["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT"]:
+for i in ["ProductDesignation_DELIVERY CHARGE", "ProductDesignation_MINERAL WATER 1.5LT", "ProductDesignation_TSANTA"]+complementary:
     product_cols.remove(i)
 
 # TODO: remove duplicated rules (e.g. A1={a,b,c,d} and A2={a,b,d} and C1=C2). Can be done by finding common subset.
@@ -328,7 +340,7 @@ def network_rules(rulesdf, nrules=100, save_path=None):
     # Remove duplicated itemsets i.e. A->C and C->A
     rulesToPlot['sortedRow'] = [sorted([a, b]) for a, b in zip(rulesToPlot.LHS, rulesToPlot.RHS)]
     rulesToPlot['sortedRow'] = rulesToPlot['sortedRow'].astype(str)
-    rulesToPlot.drop_duplicates(subset=['sortedRow'], inplace=True)
+    #rulesToPlot.drop_duplicates(subset=['sortedRow'], inplace=True)
     # Plot
     if type(nrules) == int:
         rulesToPlot = rulesToPlot[:nrules]
@@ -421,7 +433,7 @@ high_lift_rules_products.shape[0]  # number of rows
 network_rules(high_lift_rules_products, "all")
 
 del df_clean_product_dummies, frequent_itemsets_products, relevant_rules_products, low_lift_rules_products, \
-    high_lift_rules_products
+    high_lift_rules_products, i, complementary
 
 # ASSOCIATION RULES - Product Dummies Only Delivery --------------------------------------------------------------------
 # CREATE INVOICE DF
